@@ -43,7 +43,7 @@ object PaymentsUtil {
      * @param gatewayMerchantId the gateway merchant ID
      * @return [JSONObject] with gateway tokenization specification
      */
-    private fun getGatewayTokenizationSpecification(gateway: String, gatewayMerchantId: String): JSONObject {
+    fun getGatewayTokenizationSpecification(gateway: String, gatewayMerchantId: String): JSONObject {
         return JSONObject().apply {
             put("type", "PAYMENT_GATEWAY")
             put("parameters", JSONObject().apply {
@@ -79,7 +79,7 @@ object PaymentsUtil {
      * @param gatewayMerchantId the gateway merchant ID
      * @return [JSONObject] which describes allowed payment methods
      */
-    private fun getCardPaymentMethod(
+    fun getCardPaymentMethod(
         allowedCardNetworks: List<String>,
         allowedCardAuthMethods: List<String>,
         gateway: String,
@@ -96,7 +96,7 @@ object PaymentsUtil {
      * @param amount cost of the item
      * @return information about the requested payment's total.
      */
-    private fun getTransactionInfo(currencyCode: String, amount: String): JSONObject {
+    fun getTransactionInfo(currencyCode: String, amount: String): JSONObject {
         return JSONObject().apply {
             put("totalPrice", amount)
             put("totalPriceStatus", "FINAL")
@@ -110,7 +110,7 @@ object PaymentsUtil {
      * @param merchantName name of the merchant
      * @return information about the merchant
      */
-    private fun getMerchantInfo(merchantName: String): JSONObject {
+    fun getMerchantInfo(merchantName: String): JSONObject {
         return JSONObject().apply {
             put("merchantName", merchantName)
         }
@@ -129,6 +129,40 @@ object PaymentsUtil {
                 put("allowedPaymentMethods", JSONArray().apply {
                     put(getBaseCardPaymentMethod(allowedCardNetworks, allowedCardAuthMethods))
                 })
+            }
+        } catch (e: JSONException) {
+            null
+        }
+    }
+
+    /**
+     * Creates a complete payment data request for Google Pay
+     *
+     * @param allowedCardNetworks list of allowed card networks
+     * @param allowedCardAuthMethods list of allowed card auth methods
+     * @param gateway the gateway name
+     * @param gatewayMerchantId the gateway merchant ID
+     * @param currencyCode currency of the payment
+     * @param amount cost of the item
+     * @param merchantName name of the merchant
+     * @return complete payment data request as JSONObject
+     */
+    fun getPaymentDataRequest(
+        allowedCardNetworks: List<String>,
+        allowedCardAuthMethods: List<String>,
+        gateway: String,
+        gatewayMerchantId: String,
+        currencyCode: String,
+        amount: String,
+        merchantName: String
+    ): JSONObject? {
+        return try {
+            getBaseRequest().apply {
+                put("allowedPaymentMethods", JSONArray().apply {
+                    put(getCardPaymentMethod(allowedCardNetworks, allowedCardAuthMethods, gateway, gatewayMerchantId))
+                })
+                put("transactionInfo", getTransactionInfo(currencyCode, amount))
+                put("merchantInfo", getMerchantInfo(merchantName))
             }
         } catch (e: JSONException) {
             null

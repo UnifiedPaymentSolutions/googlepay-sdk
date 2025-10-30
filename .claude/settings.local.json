@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/mart/Documents/EveryPay/googlepay-rn-bridge/android/src/main/java/com/everypay/gpayrnbridge/**)",
+      "Read(//Users/mart/Documents/EveryPay/googlepay-rn-bridge/android/**)",
+      "Bash(tree:*)",
+      "Read(//Users/mart/Documents/EveryPay/googlepay-sdk-test-app/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
