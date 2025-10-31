@@ -12,7 +12,7 @@ A native Android SDK for integrating Google Pay into your Android applications.
 
 ## Installation
 
-Add the library to your project:
+### 1. Add the library to your project
 
 ```gradle
 dependencies {
@@ -21,6 +21,34 @@ dependencies {
     // implementation 'com.everypay:gpay:VERSION'
 }
 ```
+
+### 2. Configure AndroidManifest.xml
+
+Add the following required permissions and meta-data to your `AndroidManifest.xml`:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Required: Internet permission for EveryPay API calls -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        ...>
+
+        <!-- Required: Enable Google Pay API -->
+        <meta-data
+            android:name="com.google.android.gms.wallet.api.enabled"
+            android:value="true" />
+
+        <activity ...>
+            ...
+        </activity>
+    </application>
+</manifest>
+```
+
+**Important:** Without these configurations, Google Pay will fail with a `DEVELOPER_ERROR` (error code 10).
 
 ## Quick Start
 
@@ -364,6 +392,182 @@ class PaymentActivity : AppCompatActivity() {
     }
 }
 ```
+
+## EveryPay Integration (Simplified)
+
+The SDK provides a high-level helper that integrates directly with EveryPay's API, handling all backend requests automatically. This is the **recommended approach** for EveryPay merchants.
+
+### Complete Example with EverypayGooglePayHelper
+
+```kotlin
+import android.content.Intent
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.everypay.gpay.*
+import com.everypay.gpay.compose.GooglePayButton
+import com.everypay.gpay.compose.GooglePayButtonType
+import com.everypay.gpay.compose.GooglePayButtonTheme
+import com.everypay.gpay.models.EverypayConfig
+
+class MainActivity : ComponentActivity() {
+    private lateinit var everyPayHelper: EverypayGooglePayHelper
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Configure EveryPay
+        val config = EverypayConfig(
+            apiUsername = "your_api_username",
+            apiSecret = "your_api_secret",
+            apiUrl = "https://sandbox-api.everypay.com", // or production URL
+            environment = "TEST", // or "PRODUCTION"
+            accountName = "EUR3D1",
+            countryCode = "EE",
+            currencyCode = "EUR"
+        )
+
+        // Initialize helper
+        everyPayHelper = EverypayGooglePayHelper(this, config)
+
+        setContent {
+            MaterialTheme {
+                PaymentScreen(
+                    onInitialize = { initializeGooglePay() },
+                    onPayment = { makePayment() }
+                )
+            }
+        }
+    }
+
+    private fun initializeGooglePay() {
+        everyPayHelper.initialize { result ->
+            when (result) {
+                is GooglePayReadinessResult.Success -> {
+                    if (result.isReady) {
+                        Toast.makeText(this, "Google Pay ready", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this, "Google Pay not available", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                is GooglePayReadinessResult.Error -> {
+                    Toast.makeText(this, "Error: ${result.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun makePayment() {
+        everyPayHelper.makePayment(
+            amount = "10.00",
+            label = "Product Purchase",
+            orderReference = "ORDER-${System.currentTimeMillis()}",
+            customerEmail = "customer@example.com",
+            customerIp = "192.168.1.1" // optional
+        ) { result ->
+            when (result) {
+                is GooglePayResult.Success -> {
+                    Toast.makeText(this, "Payment successful!", Toast.LENGTH_SHORT).show()
+                    // Payment completed
+                }
+                is GooglePayResult.Canceled -> {
+                    Toast.makeText(this, "Payment canceled", Toast.LENGTH_SHORT).show()
+                }
+                is GooglePayResult.Error -> {
+                    Toast.makeText(this, "Payment failed: ${result.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        everyPayHelper.handleActivityResult(requestCode, resultCode, data)
+    }
+}
+
+@Composable
+fun PaymentScreen(
+    onInitialize: () -> Unit,
+    onPayment: () -> Unit
+) {
+    val isInitialized = remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        onInitialize()
+        isInitialized.value = true
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "Pay with Google Pay",
+            style = MaterialTheme.typography.headlineMedium,
+            modifier = Modifier.padding(bottom = 32.dp)
+        )
+
+        GooglePayButton(
+            onClick = onPayment,
+            buttonType = GooglePayButtonType.BUY,
+            buttonTheme = GooglePayButtonTheme.DARK,
+            enabled = isInitialized.value,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+        )
+    }
+}
+```
+
+### EverypayConfig Parameters
+
+```kotlin
+data class EverypayConfig(
+    val apiUsername: String,        // Your EveryPay API username
+    val apiSecret: String,           // Your EveryPay API secret
+    val apiUrl: String,              // "https://api.everypay.com" or "https://sandbox-api.everypay.com"
+    val environment: String,         // "TEST" or "PRODUCTION"
+    val accountName: String,         // Your EveryPay account name (e.g., "EUR3D1")
+    val countryCode: String,         // ISO country code (e.g., "EE")
+    val currencyCode: String = "EUR",                                    // ISO currency code (optional)
+    val allowedCardNetworks: List<String> = listOf("MASTERCARD", "VISA"), // Optional
+    val allowedCardAuthMethods: List<String> = listOf("PAN_ONLY", "CRYPTOGRAM_3DS") // Optional
+)
+```
+
+### What EverypayGooglePayHelper Does Automatically
+
+1. **Opens EveryPay session** - Fetches gateway configuration from EveryPay API
+2. **Initializes Google Pay** - Sets up Google Pay with correct parameters
+3. **Creates payment** - Creates payment in EveryPay before showing Google Pay
+4. **Processes token** - Submits Google Pay token to EveryPay backend
+5. **Returns final result** - Provides payment state (settled, authorized, failed)
+
+### Benefits of EverypayGooglePayHelper
+
+- **One initialization** - Simple config, no manual API calls
+- **Automatic backend integration** - Handles all EveryPay API requests
+- **Type-safe** - Kotlin data classes for all models
+- **Error handling** - Comprehensive error reporting
+- **Same config as React Native library** - Easy to maintain consistency
+
+---
+
+## Manual Integration (Advanced)
+
+For advanced use cases where you need full control, you can use the low-level API:
 
 ### 2. Custom Request Integration
 
