@@ -440,6 +440,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 PaymentScreen(
+                    everyPayHelper = everyPayHelper,
                     onInitialize = { initializeGooglePay() },
                     onPayment = { makePayment() }
                 )
@@ -495,10 +496,12 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun PaymentScreen(
+    everyPayHelper: EverypayGooglePayHelper,
     onInitialize: () -> Unit,
     onPayment: () -> Unit
 ) {
     val isInitialized = remember { mutableStateOf(false) }
+    val isProcessing = remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         onInitialize()
@@ -519,10 +522,13 @@ fun PaymentScreen(
         )
 
         GooglePayButton(
-            onClick = onPayment,
+            onClick = {
+                isProcessing.value = true
+                onPayment()
+            },
             buttonType = GooglePayButtonType.BUY,
             buttonTheme = GooglePayButtonTheme.DARK,
-            enabled = isInitialized.value,
+            enabled = isInitialized.value && !isProcessing.value,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp)
@@ -530,6 +536,8 @@ fun PaymentScreen(
     }
 }
 ```
+
+**Note:** The button is automatically disabled while a payment is being processed through the `isProcessing` state variable. This prevents users from clicking the button multiple times. Additionally, the SDK's `makePayment()` method has built-in protection against concurrent payment attempts - if called while a payment is already in progress, it will immediately return an error without making duplicate API calls.
 
 ### EverypayConfig Parameters
 

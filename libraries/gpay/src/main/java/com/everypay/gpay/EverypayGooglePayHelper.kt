@@ -70,11 +70,17 @@ class EverypayGooglePayHelper(
     private var googlePayHelper: GooglePayActivityHelper? = null
     private var currentPaymentCallback: GooglePayPaymentCallback? = null
     private var currentPaymentInfo: CreatePaymentResponse? = null
+    private var isProcessingPayment = false
 
     companion object {
         const val DEFAULT_REQUEST_CODE = 991
         private const val TAG = "EverypayGooglePayHelper"
     }
+
+    /**
+     * Returns true if a payment is currently being processed
+     */
+    fun isProcessingPayment(): Boolean = isProcessingPayment
 
     /**
      * Initializes the helper by opening an EveryPay session and setting up Google Pay.
@@ -141,7 +147,6 @@ class EverypayGooglePayHelper(
      * @param orderReference Unique order reference
      * @param customerEmail Customer email address
      * @param customerIp Customer IP address (optional)
-     * @param customerUrl Customer/merchant URL (optional, defaults to an empty string)
      * @param callback Callback to receive payment result
      */
     fun makePayment(
@@ -150,9 +155,20 @@ class EverypayGooglePayHelper(
         orderReference: String,
         customerEmail: String,
         customerIp: String? = null,
-        customerUrl: String = "",
         callback: GooglePayPaymentCallback
     ) {
+        // Prevent concurrent payment attempts
+        if (isProcessingPayment) {
+            Log.w(TAG, "Payment already in progress, ignoring request")
+            callback.onResult(
+                GooglePayResult.Error(
+                    Constants.E_PAYMENT_ERROR,
+                    "Payment already in progress. Please wait."
+                )
+            )
+            return
+        }
+
         if (sessionInfo == null) {
             Log.e(TAG, "Session not initialized. Call initialize() first.")
             callback.onResult(
@@ -189,6 +205,7 @@ class EverypayGooglePayHelper(
         }
 
         currentPaymentCallback = callback
+        isProcessingPayment = true
 
         Log.d(TAG, "Creating payment for amount: $amount")
 
@@ -205,6 +222,7 @@ class EverypayGooglePayHelper(
                             "Invalid amount format: $amount. Expected format: '10.00'"
                         )
                     )
+                    isProcessingPayment = false
                     currentPaymentCallback = null
                     return@launch
                 }
@@ -220,7 +238,7 @@ class EverypayGooglePayHelper(
                     orderReference = orderReference,
                     nonce = UUID.randomUUID().toString(),
                     mobilePayment = true,
-                    customerUrl = customerUrl,
+                    customerUrl = config.customerUrl,
                     customerIp = customerIp ?: "",
                     customerEmail = customerEmail,
                     timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
@@ -261,6 +279,7 @@ class EverypayGooglePayHelper(
                         e
                     )
                 )
+                isProcessingPayment = false
                 currentPaymentCallback = null
             }
         }
@@ -291,12 +310,14 @@ class EverypayGooglePayHelper(
             is GooglePayResult.Canceled -> {
                 Log.d(TAG, "Google Pay canceled")
                 currentPaymentCallback?.onResult(result)
+                isProcessingPayment = false
                 currentPaymentCallback = null
                 currentPaymentInfo = null
             }
             is GooglePayResult.Error -> {
                 Log.e(TAG, "Google Pay error: ${result.message}")
                 currentPaymentCallback?.onResult(result)
+                isProcessingPayment = false
                 currentPaymentCallback = null
                 currentPaymentInfo = null
             }
@@ -450,6 +471,7 @@ class EverypayGooglePayHelper(
                     )
                 )
             } finally {
+                isProcessingPayment = false
                 currentPaymentCallback = null
                 currentPaymentInfo = null
             }
