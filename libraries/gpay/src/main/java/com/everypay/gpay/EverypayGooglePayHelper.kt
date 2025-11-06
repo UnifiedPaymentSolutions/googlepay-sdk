@@ -347,7 +347,7 @@ class EverypayGooglePayHelper(
 
                 // Build Google Pay request with EveryPay data
                 val googlePayRequest = buildGooglePayRequest(
-                    sessionInfo = sessionInfo,
+                    sessionInfo = sessionInfo!!,
                     paymentInfo = paymentInfo,
                     amount = amount,
                     label = label
@@ -431,6 +431,19 @@ class EverypayGooglePayHelper(
             return
         }
 
+        val session = sessionInfo
+        if (session == null) {
+            Log.e(TAG, "Session not initialized")
+            callback.onResult(
+                GooglePayResult.Error(
+                    Constants.E_INIT_ERROR,
+                    "Session not initialized. Call initializeWithBackendData() first."
+                )
+            )
+            return
+        }
+
+        // Store backend data and callback
         currentBackendData = backendData
         currentPaymentCallback = callback
         isProcessingPayment = true
@@ -455,7 +468,7 @@ class EverypayGooglePayHelper(
 
                 // Build Google Pay request with backend data
                 val googlePayRequest = buildGooglePayRequest(
-                    sessionInfo = sessionInfo,
+                    sessionInfo = session,
                     paymentInfo = paymentInfo,
                     amount = backendData.amount.toString(),
                     label = backendData.label

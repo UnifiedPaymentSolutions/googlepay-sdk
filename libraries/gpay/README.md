@@ -8,7 +8,9 @@ A native Android SDK for integrating Google Pay into your Android applications.
 - Support for both Activity-based and custom integrations
 - Type-safe result handling with sealed classes
 - Comprehensive error handling
-- No external dependencies except Google Play Services Wallet
+- Backend mode for secure API credential management
+- SDK mode for direct EveryPay API integration
+- Jetpack Compose support with GooglePayButton composable
 
 ## Installation
 
@@ -24,13 +26,13 @@ dependencies {
 
 ### 2. Configure AndroidManifest.xml
 
-Add the following required permissions and meta-data to your `AndroidManifest.xml`:
+Add the following required meta-data to your `AndroidManifest.xml`:
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Required: Internet permission for EveryPay API calls -->
+    <!-- Required for SDK mode only: Internet permission for EveryPay API calls -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
@@ -48,7 +50,9 @@ Add the following required permissions and meta-data to your `AndroidManifest.xm
 </manifest>
 ```
 
-**Important:** Without these configurations, Google Pay will fail with a `DEVELOPER_ERROR` (error code 10).
+**Important:**
+- The Google Pay meta-data is **required for both modes**. Without it, Google Pay will fail with a `DEVELOPER_ERROR` (error code 10).
+- The INTERNET permission is **only required for SDK mode** (when the SDK makes EveryPay API calls directly). Backend mode doesn't need it since your backend handles all API communication.
 
 ## Integration Modes
 
@@ -60,9 +64,9 @@ This SDK supports two integration modes:
    - ✅ Easier compliance: PCI requirements reduced
    - See [Backend Integration](#backend-integration-recommended) below
 
-2. **SDK Mode (Legacy)** - SDK makes all EveryPay API calls automatically
+2. **SDK Mode** - SDK makes all EveryPay API calls automatically
    - ⚠️ Less secure: Credentials stored on device
-   - ✅ Simpler: No backend changes needed
+   - ✅ Simpler: No backend needed
    - See [SDK Mode Integration](#sdk-mode-integration-legacy) below
 
 ---
@@ -87,13 +91,13 @@ Backend (Your Server)              Android App                 Google Pay
        │                                │                          │
        │  3. Return session + payment   │                          │
        │    data                        │                          │
-       │────────────────────────────────►│                          │
+       │───────────────────────────────►│                          │
        │                                │                          │
        │                                │  4. Show Google Pay      │
-       │                                │──────────────────────────►│
+       │                                │─────────────────────────►│
        │                                │                          │
        │                                │  5. User completes       │
-       │                                │◄──────────────────────────│
+       │                                │◄─────────────────────────│
        │                                │                          │
        │  6. Send token to backend      │                          │
        │◄───────────────────────────────│                          │
@@ -102,7 +106,7 @@ Backend (Your Server)              Android App                 Google Pay
        │     EveryPay API               │                          │
        │                                │                          │
        │  8. Return result              │                          │
-       │────────────────────────────────►│                          │
+       │───────────────────────────────►│                          │
 ```
 
 ### Step 1: Backend API Endpoints
@@ -112,7 +116,7 @@ Your backend needs to implement 3 EveryPay API calls. Here are the curl examples
 #### 1.1. Open Session
 
 ```bash
-curl -X POST https://api.everypay.com/api/v4/google_pay/open_session \
+curl -X POST https://{API_URL}/api/v4/google_pay/open_session \
   -u "your_api_username:your_api_secret" \
   -H "Content-Type: application/json" \
   -d '{
@@ -124,19 +128,19 @@ curl -X POST https://api.everypay.com/api/v4/google_pay/open_session \
 **Response:**
 ```json
 {
-  "googlepay_merchant_identifier": "BCR2DN...",
-  "googlepay_ep_merchant_id": "123456",
+  "googlepay_merchant_identifier": "gateway:...",
+  "googlepay_ep_merchant_id": "123456...",
   "googlepay_gateway_merchant_id": "merchant_123",
   "merchant_name": "Your Store",
-  "google_pay_gateway_id": "everypay",
-  "acq_branding_domain_igw": "everypay.com"
+  "google_pay_gateway_id": "gatewayId",
+  "acq_branding_domain_igw": "every-pay.com"
 }
 ```
 
 #### 1.2. Create Payment
 
 ```bash
-curl -X POST https://api.everypay.com/api/v4/payments/oneoff \
+curl -X POST https://{API_URL}/api/v4/payments/oneoff \
   -u "your_api_username:your_api_secret" \
   -H "Content-Type: application/json" \
   -d '{
@@ -159,11 +163,11 @@ curl -X POST https://api.everypay.com/api/v4/payments/oneoff \
 **Response:**
 ```json
 {
-  "payment_reference": "abc123def456",
-  "mobile_access_token": "tok_xyz789...",
+  "payment_reference": "abc123def456...",
+  "mobile_access_token": "123xyz789...",
   "currency": "EUR",
   "descriptor_country": "EE",
-  "googlepay_merchant_identifier": "BCR2DN...",
+  "googlepay_merchant_identifier": "gateway:...",
   "account_name": "EUR3D1",
   "order_reference": "ORDER-123",
   "initial_amount": 10.00,
@@ -172,14 +176,18 @@ curl -X POST https://api.everypay.com/api/v4/payments/oneoff \
 }
 ```
 
-#### 1.3. Process Google Pay Token (Called after Android SDK returns the payment token)
+#### 1.3. Process Google Pay Token
+
+This endpoint is called after the Android SDK returns the payment token. Your backend receives the token from the Android app and processes it with EveryPay.
+
+**Important:** Use the `mobile_access_token` from the create_payment response (step 1.2) as the Bearer token in the Authorization header.
 
 ```bash
-curl -X POST https://api.everypay.com/api/v4/google_pay/payment_data \
-  -H "Authorization: Bearer tok_xyz789..." \
+curl -X POST https://{API_URL}/api/v4/google_pay/payment_data \
+  -H "Authorization: Bearer {mobile_access_token}" \
   -H "Content-Type: application/json" \
   -d '{
-    "payment_reference": "abc123def456",
+    "payment_reference": "abc123def456...",
     "token_consent_agreed": false,
     "signature": "MEQCIF...",
     "intermediateSigningKey": {
@@ -191,12 +199,13 @@ curl -X POST https://api.everypay.com/api/v4/google_pay/payment_data \
   }'
 ```
 
+**Note:** The Android SDK's `GooglePayTokenData` includes the `mobile_access_token` field for your convenience. Your backend should extract this token and use it in the Authorization header when calling this endpoint.
+
 **Response:**
 ```json
 {
   "state": "settled",
-  "payment_reference": "abc123def456",
-  "order_reference": "ORDER-123"
+  "paymentReference": "abc123def456..."
 }
 ```
 
@@ -209,6 +218,7 @@ POST /api/google-pay/create-payment
 ```
 
 **Request Body:**
+If you calculate these values on the back-end side then this input is not needed
 ```json
 {
   "amount": "10.00",
@@ -218,22 +228,60 @@ POST /api/google-pay/create-payment
 ```
 
 **Response Body (GooglePayBackendData):**
+Map the EveryPay API `open_session` and `oneoff` response values to this structure:
 ```json
 {
-  "merchantId": "BCR2DN...",
-  "merchantName": "Your Store",
-  "gatewayId": "everypay",
-  "gatewayMerchantId": "merchant_123",
-  "currency": "EUR",
-  "countryCode": "EE",
-  "paymentReference": "abc123def456",
-  "mobileAccessToken": "tok_xyz789...",
-  "amount": 10.00,
-  "label": "Product Purchase"
+  "merchantId": "<googlepay_merchant_identifier from open_session>",
+  "merchantName": "<merchant_name from open_session>",
+  "gatewayId": "<google_pay_gateway_id from open_session>",
+  "gatewayMerchantId": "<googlepay_gateway_merchant_id from open_session>",
+  "currency": "<currency from create_payment>",
+  "countryCode": "<descriptor_country from create_payment>",
+  "paymentReference": "<payment_reference from create_payment>",
+  "mobileAccessToken": "<mobile_access_token from create_payment>",
+  "amount": "<standing_amount from create_payment>",
+  "label": "<label from create_payment request>"
 }
 ```
 
-**Note:** The `amount` should be populated from the EveryPay response's `standing_amount` field, and `label` from the request's `label` field.
+#### 2.2. Process Token Endpoint
+
+Create an endpoint that processes the Google Pay token after the Android SDK returns it:
+
+```
+POST /api/google-pay/process-token
+```
+
+**Request Body (GooglePayTokenData from Android SDK):**
+```json
+{
+  "payment_reference": "abc123def456...",
+  "mobile_access_token": "123xyz789...",
+  "token_consent_agreed": false,
+  "signature": "MEQCIF...",
+  "intermediateSigningKey": {
+    "signedKey": "{\"keyValue\":\"...\"}",
+    "signatures": ["MEUCIQ..."]
+  },
+  "protocolVersion": "ECv2",
+  "signedMessage": "{\"encryptedMessage\":\"...\"}"
+}
+```
+
+**Backend Implementation:**
+Your backend should:
+1. Extract the `mobile_access_token` from the request
+2. Use it as the Bearer token to call EveryPay's `/api/v4/google_pay/payment_data` endpoint (see Step 1.3 above)
+3. Return the payment result to the Android app
+
+**Response Body:**
+```json
+{
+  "state": "settled",
+  "payment_reference": "abc123def456...",
+  "order_reference": "ORDER-123"
+}
+```
 
 ### Step 3: Android Implementation
 
@@ -269,7 +317,7 @@ class MainActivity : ComponentActivity() {
             // Note: apiUsername, apiSecret, apiUrl, accountName are null (backend mode)
         )
 
-        // Initialize helper (no API calls yet)
+        // Initialize helper
         everyPayHelper = EverypayGooglePayHelper(this, config)
 
         // Set up UI with Google Pay button
@@ -366,7 +414,7 @@ class MainActivity : ComponentActivity() {
             countryCode = response.countryCode,
             paymentReference = response.paymentReference,
             mobileAccessToken = response.mobileAccessToken,
-            amount = response.amount.toDouble(), // from standing_amount
+            amount = response.amount.toDouble(),
             label = response.label
         )
     }
@@ -410,7 +458,7 @@ class MainActivity : ComponentActivity() {
 
 ---
 
-## SDK Mode Integration (Legacy)
+## SDK Mode Integration
 
 ### 1. Adding the Google Pay Button
 
@@ -919,7 +967,7 @@ data class EverypayConfig(
     // SDK Mode - Required fields
     val apiUsername: String? = null,        // Your EveryPay API username (required for SDK mode, null for backend mode)
     val apiSecret: String? = null,           // Your EveryPay API secret (required for SDK mode, null for backend mode)
-    val apiUrl: String? = null,              // "https://api.everypay.com" or "https://sandbox-api.everypay.com" (required for SDK mode, null for backend mode)
+    val apiUrl: String? = null,              // Everypay API URL (required for SDK mode, null for backend mode)
     val accountName: String? = null,         // Your EveryPay account name, e.g., "EUR3D1" (required for SDK mode, null for backend mode)
     val customerUrl: String? = null,         // Customer redirect URL (required for SDK mode, null for backend mode)
 
@@ -1117,9 +1165,19 @@ Use `WalletConstants.ENVIRONMENT_TEST` for testing and `WalletConstants.ENVIRONM
 ## Requirements
 
 - Android API 24+
-- Google Play Services Wallet 19.4.0+
 - Kotlin 1.8+
+
+### Dependencies
+
+The SDK requires the following dependencies (automatically included when you add the SDK):
+
+- **Google Play Services Wallet** 19.4.0+ - For Google Pay functionality
+- **OkHttp** 4.12.0+ - For HTTP communication with EveryPay API (SDK mode only)
+- **Kotlinx Coroutines** 1.7.3+ - For async operations
+- **Jetpack Compose** 1.7.6+ (optional) - Only needed if using `GooglePayButton` composable
+- **AndroidX Core KTX** 1.17.0+
+- **AndroidX AppCompat** 1.7.1+
 
 ## License
 
-Copyright 2024 EveryPay
+Copyright 2025 EveryPay
