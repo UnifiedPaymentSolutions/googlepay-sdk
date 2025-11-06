@@ -50,7 +50,367 @@ Add the following required permissions and meta-data to your `AndroidManifest.xm
 
 **Important:** Without these configurations, Google Pay will fail with a `DEVELOPER_ERROR` (error code 10).
 
-## Quick Start
+## Integration Modes
+
+This SDK supports two integration modes:
+
+1. **Backend Mode (RECOMMENDED)** - Backend makes EveryPay API calls, SDK handles Google Pay UI
+   - ✅ More secure: API credentials stay on backend
+   - ✅ Better control: Payment logic centralized
+   - ✅ Easier compliance: PCI requirements reduced
+   - See [Backend Integration](#backend-integration-recommended) below
+
+2. **SDK Mode (Legacy)** - SDK makes all EveryPay API calls automatically
+   - ⚠️ Less secure: Credentials stored on device
+   - ✅ Simpler: No backend changes needed
+   - See [SDK Mode Integration](#sdk-mode-integration-legacy) below
+
+---
+
+## Backend Integration (RECOMMENDED)
+
+### Overview
+
+In backend mode, your server makes the EveryPay API calls and the Android SDK only handles the Google Pay UI and token extraction. This is the recommended option because API credentials never leave your backend.
+
+### Flow Diagram
+
+```
+Backend (Your Server)              Android App                 Google Pay
+       │                                │                          │
+       │  1. Create payment request     │                          │
+       │◄───────────────────────────────│                          │
+       │                                │                          │
+       │  2. Call EveryPay APIs         │                          │
+       │    - open_session              │                          │
+       │    - create_payment            │                          │
+       │                                │                          │
+       │  3. Return session + payment   │                          │
+       │    data                        │                          │
+       │────────────────────────────────►│                          │
+       │                                │                          │
+       │                                │  4. Show Google Pay      │
+       │                                │──────────────────────────►│
+       │                                │                          │
+       │                                │  5. User completes       │
+       │                                │◄──────────────────────────│
+       │                                │                          │
+       │  6. Send token to backend      │                          │
+       │◄───────────────────────────────│                          │
+       │                                │                          │
+       │  7. Process token via          │                          │
+       │     EveryPay API               │                          │
+       │                                │                          │
+       │  8. Return result              │                          │
+       │────────────────────────────────►│                          │
+```
+
+### Step 1: Backend API Endpoints
+
+Your backend needs to implement 3 EveryPay API calls. Here are the curl examples:
+
+#### 1.1. Open Session
+
+```bash
+curl -X POST https://api.everypay.com/api/v4/google_pay/open_session \
+  -u "your_api_username:your_api_secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "api_username": "your_api_username",
+    "account_name": "EUR3D1"
+  }'
+```
+
+**Response:**
+```json
+{
+  "googlepay_merchant_identifier": "BCR2DN...",
+  "googlepay_ep_merchant_id": "123456",
+  "googlepay_gateway_merchant_id": "merchant_123",
+  "merchant_name": "Your Store",
+  "google_pay_gateway_id": "everypay",
+  "acq_branding_domain_igw": "everypay.com"
+}
+```
+
+#### 1.2. Create Payment
+
+```bash
+curl -X POST https://api.everypay.com/api/v4/payments/oneoff \
+  -u "your_api_username:your_api_secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "api_username": "your_api_username",
+    "account_name": "EUR3D1",
+    "amount": 10.00,
+    "label": "Product Purchase",
+    "currency_code": "EUR",
+    "country_code": "EE",
+    "order_reference": "ORDER-123",
+    "nonce": "550e8400-e29b-41d4-a716-446655440000",
+    "mobile_payment": true,
+    "customer_url": "https://yourstore.com/payment/callback",
+    "customer_ip": "192.168.1.1",
+    "customer_email": "customer@example.com",
+    "timestamp": "2024-01-15T10:30:00Z"
+  }'
+```
+
+**Response:**
+```json
+{
+  "payment_reference": "abc123def456",
+  "mobile_access_token": "tok_xyz789...",
+  "currency": "EUR",
+  "descriptor_country": "EE",
+  "googlepay_merchant_identifier": "BCR2DN...",
+  "account_name": "EUR3D1",
+  "order_reference": "ORDER-123",
+  "initial_amount": 10.00,
+  "standing_amount": 10.00,
+  "payment_state": "initial"
+}
+```
+
+#### 1.3. Process Google Pay Token (Called after Android SDK returns the payment token)
+
+```bash
+curl -X POST https://api.everypay.com/api/v4/google_pay/payment_data \
+  -H "Authorization: Bearer tok_xyz789..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "payment_reference": "abc123def456",
+    "token_consent_agreed": false,
+    "signature": "MEQCIF...",
+    "intermediateSigningKey": {
+      "signedKey": "{\"keyValue\":\"...\"}",
+      "signatures": ["MEUCIQ..."]
+    },
+    "protocolVersion": "ECv2",
+    "signedMessage": "{\"encryptedMessage\":\"...\"}"
+  }'
+```
+
+**Response:**
+```json
+{
+  "state": "settled",
+  "payment_reference": "abc123def456",
+  "order_reference": "ORDER-123"
+}
+```
+
+### Step 2: Backend Endpoint for Android App
+
+Create an endpoint that combines the two responses:
+
+```
+POST /api/google-pay/create-payment
+```
+
+**Request Body:**
+```json
+{
+  "amount": "10.00",
+  "order_reference": "ORDER-123",
+  "customer_email": "customer@example.com"
+}
+```
+
+**Response Body (GooglePayBackendData):**
+```json
+{
+  "merchantId": "BCR2DN...",
+  "merchantName": "Your Store",
+  "gatewayId": "everypay",
+  "gatewayMerchantId": "merchant_123",
+  "currency": "EUR",
+  "countryCode": "EE",
+  "paymentReference": "abc123def456",
+  "mobileAccessToken": "tok_xyz789...",
+  "amount": 10.00,
+  "label": "Product Purchase"
+}
+```
+
+**Note:** The `amount` should be populated from the EveryPay response's `standing_amount` field, and `label` from the request's `label` field.
+
+### Step 3: Android Implementation
+
+```kotlin
+import android.content.Intent
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.*
+import androidx.compose.runtime.*
+import androidx.lifecycle.lifecycleScope
+import com.everypay.gpay.*
+import com.everypay.gpay.compose.GooglePayButton
+import com.everypay.gpay.compose.GooglePayButtonTheme
+import com.everypay.gpay.compose.GooglePayButtonType
+import com.everypay.gpay.models.*
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+class MainActivity : ComponentActivity() {
+    private lateinit var everyPayHelper: EverypayGooglePayHelper
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Configure for backend mode (no API credentials)
+        val config = EverypayConfig(
+            environment = "TEST", // or "PRODUCTION"
+            countryCode = "EE",
+            currencyCode = "EUR"
+            // Note: apiUsername, apiSecret, apiUrl, accountName are null (backend mode)
+        )
+
+        // Initialize helper (no API calls yet)
+        everyPayHelper = EverypayGooglePayHelper(this, config)
+
+        // Set up UI with Google Pay button
+        setContent {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                GooglePayButton(
+                    onClick = { makePayment() },
+                    buttonType = GooglePayButtonType.BUY,
+                    buttonTheme = GooglePayButtonTheme.DARK,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                )
+            }
+        }
+    }
+
+    private fun makePayment() {
+        lifecycleScope.launch {
+            // 1. Call backend to initialize payment (backend calls EveryPay open_session + create_payment)
+            val paymentData = createPaymentOnBackend(
+                amount = "10.00",
+                orderReference = "ORDER-${System.currentTimeMillis()}",
+                customerEmail = "customer@example.com"
+            )
+
+            // 2. Initialize the SDK session with backend data
+            everyPayHelper.initializeWithBackendData(paymentData) { initResult ->
+                when (initResult) {
+                    is GooglePayReadinessResult.Success -> {
+                        if (initResult.isReady) {
+                            // 3. Show Google Pay sheet (amount and label come from backendData)
+                            everyPayHelper.makePaymentWithBackendData(
+                                backendData = paymentData
+                            ) { result ->
+                                when (result) {
+                                    is GooglePayResult.TokenReceived -> {
+                                        // 4. Send token to backend for processing
+                                        lifecycleScope.launch {
+                                            processTokenOnBackend(result.tokenData)
+                                        }
+                                    }
+                                    is GooglePayResult.Canceled -> {
+                                        Toast.makeText(this@MainActivity, "Payment canceled", Toast.LENGTH_SHORT).show()
+                                    }
+                                    is GooglePayResult.Error -> {
+                                        Toast.makeText(this@MainActivity, "Error: ${result.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                    else -> {}
+                                }
+                            }
+                        } else {
+                            Toast.makeText(this@MainActivity, "Google Pay not available", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    is GooglePayReadinessResult.Error -> {
+                        Toast.makeText(this@MainActivity, "Initialization error: ${initResult.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
+
+    // Create payment on your backend
+    // Backend makes BOTH EveryPay API calls (open_session + create_payment) and returns combined data
+    private suspend fun createPaymentOnBackend(
+        amount: String,
+        orderReference: String,
+        customerEmail: String
+    ): GooglePayBackendData = withContext(Dispatchers.IO) {
+        // Call your backend endpoint that internally calls both:
+        // 1. EveryPay open_session API
+        // 2. EveryPay create_payment API
+        val response = yourApiClient.post("/api/google-pay/create-payment") {
+            body = mapOf(
+                "amount" to amount,
+                "order_reference" to orderReference,
+                "customer_email" to customerEmail
+            )
+        }
+        // Backend returns combined session + payment data
+        GooglePayBackendData(
+            merchantId = response.merchantId,
+            merchantName = response.merchantName,
+            gatewayId = response.gatewayId,
+            gatewayMerchantId = response.gatewayMerchantId,
+            currency = response.currency,
+            countryCode = response.countryCode,
+            paymentReference = response.paymentReference,
+            mobileAccessToken = response.mobileAccessToken,
+            amount = response.amount.toDouble(), // from standing_amount
+            label = response.label
+        )
+    }
+
+    // Process token on your backend
+    private suspend fun processTokenOnBackend(tokenData: GooglePayTokenData) = withContext(Dispatchers.IO) {
+        try {
+            // Send token to backend for processing via EveryPay API
+            val response = yourApiClient.post("/api/google-pay/process-token") {
+                body = tokenData.toJson().toString()
+            }
+
+            withContext(Dispatchers.Main) {
+                if (response.state == "settled" || response.state == "authorized") {
+                    Toast.makeText(this@MainActivity, "Payment successful!", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this@MainActivity, "Payment failed: ${response.state}", Toast.LENGTH_LONG).show()
+                }
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        everyPayHelper.handleActivityResult(requestCode, resultCode, data)
+    }
+}
+```
+
+### Security Benefits
+
+- ✅ **API credentials never on device** - No risk of credential extraction
+- ✅ **Centralized payment logic** - All business logic on backend
+- ✅ **Better audit trail** - All API calls logged on backend
+- ✅ **Easier credential rotation** - Update backend only
+- ✅ **Reduced PCI scope** - Payment data flows through backend
+
+---
+
+## SDK Mode Integration (Legacy)
 
 ### 1. Adding the Google Pay Button
 
@@ -248,6 +608,9 @@ class MainActivity : ComponentActivity() {
             is GooglePayResult.Error -> {
                 Toast.makeText(this, "Payment error: ${result.message}", Toast.LENGTH_LONG).show()
             }
+            is GooglePayResult.TokenReceived -> {
+                // Not applicable for manual integration
+            }
         }
     }
 
@@ -377,6 +740,9 @@ class PaymentActivity : AppCompatActivity() {
                         // Handle error
                         Log.e("GooglePay", "Payment error: ${result.message}")
                     }
+                    is GooglePayResult.TokenReceived -> {
+                        // Not applicable for manual integration
+                    }
                 }
             }
         )
@@ -393,9 +759,11 @@ class PaymentActivity : AppCompatActivity() {
 }
 ```
 
-## EveryPay Integration (Simplified)
+## EveryPay SDK Mode (Deprecated - Use Backend Mode Instead)
 
-The SDK provides a high-level helper that integrates directly with EveryPay's API, handling all backend requests automatically. This is the **recommended approach** for EveryPay merchants.
+⚠️ **This SDK mode is deprecated in favor of Backend Mode for security reasons.**
+
+The SDK provides a high-level helper that integrates directly with EveryPay's API, handling all backend requests automatically from the Android app. While simpler to implement, this approach stores API credentials on the device, which is less secure than the recommended Backend Mode.
 
 ### Complete Example with EverypayGooglePayHelper
 
@@ -423,7 +791,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Configure EveryPay
+        // Configure EveryPay (SDK mode - all credentials required)
         val config = EverypayConfig(
             apiUsername = "your_api_username",
             apiSecret = "your_api_secret",
@@ -431,6 +799,7 @@ class MainActivity : ComponentActivity() {
             environment = "TEST", // or "PRODUCTION"
             accountName = "EUR3D1",
             countryCode = "EE",
+            customerUrl = "https://yourstore.com/payment/callback",
             currencyCode = "EUR"
         )
 
@@ -483,6 +852,10 @@ class MainActivity : ComponentActivity() {
                 }
                 is GooglePayResult.Error -> {
                     Toast.makeText(this, "Payment failed: ${result.message}", Toast.LENGTH_LONG).show()
+                }
+                is GooglePayResult.TokenReceived -> {
+                    // This should not happen in SDK mode, but handle it for completeness
+                    Log.e("Payment", "Unexpected TokenReceived in SDK mode")
                 }
             }
         }
@@ -543,17 +916,27 @@ fun PaymentScreen(
 
 ```kotlin
 data class EverypayConfig(
-    val apiUsername: String,        // Your EveryPay API username
-    val apiSecret: String,           // Your EveryPay API secret
-    val apiUrl: String,              // "https://api.everypay.com" or "https://sandbox-api.everypay.com"
-    val environment: String,         // "TEST" or "PRODUCTION"
-    val accountName: String,         // Your EveryPay account name (e.g., "EUR3D1")
-    val countryCode: String,         // ISO country code (e.g., "EE")
-    val currencyCode: String = "EUR",                                    // ISO currency code (optional)
-    val allowedCardNetworks: List<String> = listOf("MASTERCARD", "VISA"), // Optional
-    val allowedCardAuthMethods: List<String> = listOf("PAN_ONLY", "CRYPTOGRAM_3DS") // Optional
+    // SDK Mode - Required fields
+    val apiUsername: String? = null,        // Your EveryPay API username (required for SDK mode, null for backend mode)
+    val apiSecret: String? = null,           // Your EveryPay API secret (required for SDK mode, null for backend mode)
+    val apiUrl: String? = null,              // "https://api.everypay.com" or "https://sandbox-api.everypay.com" (required for SDK mode, null for backend mode)
+    val accountName: String? = null,         // Your EveryPay account name, e.g., "EUR3D1" (required for SDK mode, null for backend mode)
+    val customerUrl: String? = null,         // Customer redirect URL (required for SDK mode, null for backend mode)
+
+    // Both Modes - Required fields
+    val environment: String,                 // "TEST" or "PRODUCTION" (always required)
+    val countryCode: String,                 // ISO country code, e.g., "EE" (always required)
+
+    // Both Modes - Optional fields
+    val currencyCode: String = "EUR",                                    // ISO currency code (default: "EUR")
+    val allowedCardNetworks: List<String> = listOf("MASTERCARD", "VISA"), // Allowed card networks
+    val allowedCardAuthMethods: List<String> = listOf("PAN_ONLY", "CRYPTOGRAM_3DS") // Allowed auth methods
 )
 ```
+
+**Mode Detection:**
+- **Backend Mode**: Leave `apiUsername`, `apiSecret`, `apiUrl`, `accountName`, `customerUrl` as `null`
+- **SDK Mode**: Provide all API credentials
 
 ### What EverypayGooglePayHelper Does Automatically
 

@@ -34,16 +34,19 @@ class EverypayApiClient(private val config: EverypayConfig) {
     /**
      * Opens a session with EveryPay to get Google Pay gateway configuration
      *
+     * Note: This method is only called in SDK mode where credentials are required and validated
+     *
      * @return OpenSessionResponse containing gateway configuration
      * @throws IOException if network request fails
      * @throws Exception if response parsing fails
      */
     fun openSession(): OpenSessionResponse {
-        val url = "${config.apiUrl}/api/v4/google_pay/open_session"
+        // Safe to use !! because this is only called in SDK mode where config validation ensures these are not null
+        val url = "${config.apiUrl!!}/api/v4/google_pay/open_session"
 
         val requestBody = JSONObject().apply {
-            put("api_username", config.apiUsername)
-            put("account_name", config.accountName)
+            put("api_username", config.apiUsername!!)
+            put("account_name", config.accountName!!)
         }
 
         val request = Request.Builder()
@@ -186,10 +189,12 @@ class EverypayApiClient(private val config: EverypayConfig) {
 
     /**
      * Creates Basic Authentication header
+     *
+     * Note: This method is only called in SDK mode where credentials are required and validated
      */
     private fun createBasicAuthHeader(): String {
-
-        val credentials = "${config.apiUsername}:${config.apiSecret}"
+        // Safe to use !! because this is only called in SDK mode where config validation ensures these are not null
+        val credentials = "${config.apiUsername!!}:${config.apiSecret!!}"
         val encodedCredentials = Base64.encodeToString(
             credentials.toByteArray(Charsets.UTF_8),
             Base64.NO_WRAP
