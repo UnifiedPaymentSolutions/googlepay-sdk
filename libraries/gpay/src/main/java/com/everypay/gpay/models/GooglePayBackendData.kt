@@ -18,7 +18,7 @@ package com.everypay.gpay.models
  * @param countryCode Country code for payment, e.g., "EE" (from create_payment: descriptor_country)
  * @param paymentReference Unique payment reference (from create_payment: payment_reference)
  * @param mobileAccessToken Access token for processing payment (from create_payment: mobile_access_token)
- * @param amount Payment amount to display (from create_payment: standing_amount)
+ * @param amount Payment amount to display (from create_payment: standing_amount). Can be 0 for token requests.
  * @param label Payment label/description to display (from create_payment: label)
  */
 data class GooglePayBackendData(
@@ -42,7 +42,9 @@ data class GooglePayBackendData(
         require(countryCode.isNotBlank()) { "countryCode cannot be blank" }
         require(paymentReference.isNotBlank()) { "paymentReference cannot be blank" }
         require(mobileAccessToken.isNotBlank()) { "mobileAccessToken cannot be blank" }
-        require(amount > 0) { "amount must be greater than 0" }
-        require(label.isNotBlank()) { "label cannot be blank" }
+        require(amount >= 0) { "amount must be greater than or equal to 0" }
+        require(label.isNotBlank() || amount == 0.0) {
+            "label cannot be blank for payments (can be empty only for zero-amount token requests)"
+        }
     }
 }

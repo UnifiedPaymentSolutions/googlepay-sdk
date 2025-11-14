@@ -16,7 +16,8 @@ import org.json.JSONObject
  * @param intermediateSigningKey Intermediate signing key from Google Pay token
  * @param protocolVersion Protocol version from Google Pay token
  * @param signedMessage Signed message from Google Pay token
- * @param tokenConsentAgreed Token consent flag (always false for Google Pay)
+ * @param tokenConsentAgreed Token consent flag - true when requesting token for MIT/recurring payments,
+ *                            false for immediate one-time payments (default: false)
  */
 data class GooglePayTokenData(
     val paymentReference: String,

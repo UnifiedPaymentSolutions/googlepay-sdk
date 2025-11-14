@@ -103,6 +103,10 @@ class EverypayApiClient(private val config: EverypayConfig) {
             put("customer_ip", request.customerIp)
             put("customer_email", request.customerEmail)
             put("timestamp", request.timestamp)
+            // Token request fields (optional)
+            request.requestToken?.let { put("request_token", it) }
+            request.tokenConsentAgreed?.let { put("token_consent_agreed", it) }
+            request.tokenAgreement?.let { put("token_agreement", it) }
         }
 
         val httpRequest = Request.Builder()
@@ -116,6 +120,7 @@ class EverypayApiClient(private val config: EverypayConfig) {
 
         client.newCall(httpRequest).execute().use { response ->
             val responseBody = response.body?.string()
+            Log.d(TAG, "oneoff Response received (length: ${responseBody?.length ?: 0})")
 
             if (!response.isSuccessful) {
                 val apiError = parseErrorResponse(response.code, responseBody)
@@ -169,6 +174,7 @@ class EverypayApiClient(private val config: EverypayConfig) {
 
         client.newCall(httpRequest).execute().use { response ->
             val responseBody = response.body?.string()
+            Log.d(TAG, "payment_data Response received (status: ${response.code})")
 
             if (!response.isSuccessful) {
                 val apiError = parseErrorResponse(response.code, responseBody)
@@ -184,6 +190,45 @@ class EverypayApiClient(private val config: EverypayConfig) {
 
             Log.d(TAG, "Payment processed successfully")
             return parseProcessPaymentResponse(responseBody)
+        }
+    }
+
+    /**
+     * Gets payment details including MIT token for recurring payments
+     * Calls GET /api/v4/payments/{payment_reference}
+     *
+     * @param paymentReference Payment reference from payment creation
+     * @return Payment details with MIT token in ccDetails.token field
+     */
+    fun getPaymentDetails(paymentReference: String): PaymentDetailsResponse {
+        val url = "${config.apiUrl}/api/v4/payments/$paymentReference?api_username=${config.apiUsername}"
+
+        val httpRequest = Request.Builder()
+            .url(url)
+            .get()
+            .addHeader("Authorization", createBasicAuthHeader())
+            .build()
+
+        Log.d(TAG, "Getting payment details: $url")
+
+        client.newCall(httpRequest).execute().use { response ->
+            val responseBody = response.body?.string()
+            Log.d(TAG, "GET /payments response received (status: ${response.code})")
+
+            if (!response.isSuccessful) {
+                val apiError = parseErrorResponse(response.code, responseBody)
+                val errorMessage = apiError.toFormattedMessage()
+                Log.e(TAG, "Failed to get payment details: $errorMessage")
+                throw IOException("Failed to get payment details: $errorMessage")
+            }
+
+            if (responseBody == null) {
+                Log.e(TAG, "Empty response body from get payment details")
+                throw IOException("Empty response body from get payment details")
+            }
+
+            Log.d(TAG, "Payment details retrieved successfully")
+            return parsePaymentDetailsResponse(responseBody)
         }
     }
 
@@ -299,6 +344,36 @@ class EverypayApiClient(private val config: EverypayConfig) {
             state = jsonObject.getString("state"),
             paymentReference = if (jsonObject.has("payment_reference")) jsonObject.getString("payment_reference") else null,
             orderReference = if (jsonObject.has("order_reference")) jsonObject.getString("order_reference") else null
+        )
+    }
+
+    /**
+     * Parses payment details response JSON from GET /payments endpoint
+     */
+    private fun parsePaymentDetailsResponse(json: String): PaymentDetailsResponse {
+        val jsonObject = JSONObject(json)
+
+        // Parse cc_details if present (contains MIT token)
+        val ccDetails = if (jsonObject.has("cc_details")) {
+            val ccDetailsJson = jsonObject.getJSONObject("cc_details")
+            CardDetails(
+                token = ccDetailsJson.optString("token").takeIf { it.isNotEmpty() },
+                lastFourDigits = ccDetailsJson.optString("last_four_digits").takeIf { it.isNotEmpty() },
+                month = ccDetailsJson.optString("month").takeIf { it.isNotEmpty() },
+                year = ccDetailsJson.optString("year").takeIf { it.isNotEmpty() }
+            )
+        } else null
+
+        return PaymentDetailsResponse(
+            paymentReference = jsonObject.getString("payment_reference"),
+            paymentState = jsonObject.getString("payment_state"),
+            ccDetails = ccDetails,
+            orderReference = jsonObject.optString("order_reference").takeIf { it.isNotEmpty() },
+            traceId = jsonObject.optString("trace_id").takeIf { it.isNotEmpty() },
+            paymentMethod = jsonObject.optString("payment_method").takeIf { it.isNotEmpty() },
+            accountName = jsonObject.optString("account_name").takeIf { it.isNotEmpty() },
+            initialAmount = if (jsonObject.has("initial_amount")) jsonObject.getDouble("initial_amount") else null,
+            standingAmount = if (jsonObject.has("standing_amount")) jsonObject.getDouble("standing_amount") else null
         )
     }
 }

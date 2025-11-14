@@ -1,6 +1,8 @@
 package com.everypay.gpay
 
 import com.everypay.gpay.models.GooglePayTokenData
+import com.everypay.gpay.models.PaymentDetailsResponse
+import com.everypay.gpay.models.ProcessPaymentResponse
 import com.google.android.gms.wallet.PaymentData
 
 /**
@@ -15,14 +17,24 @@ sealed class GooglePayResult {
     data class Success(val paymentData: PaymentData) : GooglePayResult()
 
     /**
-     * Google Pay token received (Backend mode only)
-     * The token should be sent to your backend for processing via POST /api/v4/google_pay/payment_data
-     * @param tokenData Extracted Google Pay token data to send to backend
+     * Google Pay token received
+     *
+     * The token should be sent to your backend for processing.
+     *
+     * @param tokenData Extracted Google Pay token data
      * @param paymentData The original payment data from Google Pay
+     * @param paymentResponse Response from EveryPay payment_data endpoint (SDK mode only).
+     *                        Contains payment state and token information for MIT payments.
+     *                        Null for backend mode (backend processes payment_data directly).
+     * @param paymentDetails Payment details from GET /payments endpoint (SDK mode only).
+     *                       Contains the MIT token in ccDetails.token field for recurring payments.
+     *                       Null for backend mode (backend calls GET /payments directly).
      */
     data class TokenReceived(
         val tokenData: GooglePayTokenData,
-        val paymentData: PaymentData
+        val paymentData: PaymentData,
+        val paymentResponse: ProcessPaymentResponse? = null,
+        val paymentDetails: PaymentDetailsResponse? = null
     ) : GooglePayResult()
 
     /**

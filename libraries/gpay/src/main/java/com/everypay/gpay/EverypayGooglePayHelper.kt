@@ -71,7 +71,9 @@ class EverypayGooglePayHelper(
     private var currentPaymentCallback: GooglePayPaymentCallback? = null
     private var currentPaymentInfo: CreatePaymentResponse? = null
     private var currentBackendData: GooglePayBackendData? = null
+    private val processingLock = Any()
     private var isProcessingPayment = false
+    private var isTokenRequest = false
 
     companion object {
         const val DEFAULT_REQUEST_CODE = 991
@@ -81,7 +83,33 @@ class EverypayGooglePayHelper(
     /**
      * Returns true if a payment is currently being processed
      */
-    fun isProcessingPayment(): Boolean = isProcessingPayment
+    fun isProcessingPayment(): Boolean = synchronized(processingLock) { isProcessingPayment }
+
+    /**
+     * Gateway ID from the session info, or null if not initialized
+     */
+    val gatewayId: String?
+        get() = sessionInfo?.googlePayGatewayId
+
+    /**
+     * Gateway merchant ID from the session info, or null if not initialized
+     */
+    val gatewayMerchantId: String?
+        get() = sessionInfo?.googlepayGatewayMerchantId
+
+    /**
+     * Resets all payment-related state variables
+     * Call this after payment completion or errors to ensure clean state
+     */
+    private fun resetPaymentState() {
+        synchronized(processingLock) {
+            isProcessingPayment = false
+            isTokenRequest = false
+            currentPaymentCallback = null
+            currentPaymentInfo = null
+            currentBackendData = null
+        }
+    }
 
     /**
      * Initializes the helper by opening an EveryPay session and setting up Google Pay (SDK mode).
@@ -260,16 +288,20 @@ class EverypayGooglePayHelper(
             return
         }
 
-        // Prevent concurrent payment attempts
-        if (isProcessingPayment) {
-            Log.w(TAG, "Payment already in progress, ignoring request")
-            callback.onResult(
-                GooglePayResult.Error(
-                    Constants.E_PAYMENT_ERROR,
-                    "Payment already in progress. Please wait."
+        // Prevent concurrent payment attempts with thread safety
+        synchronized(processingLock) {
+            if (isProcessingPayment) {
+                Log.w(TAG, "Payment already in progress, ignoring request")
+                callback.onResult(
+                    GooglePayResult.Error(
+                        Constants.E_PAYMENT_ERROR,
+                        "Operation already in progress. Please wait for completion."
+                    )
                 )
-            )
-            return
+                return
+            }
+            isProcessingPayment = true
+            currentPaymentCallback = callback
         }
 
         if (sessionInfo == null) {
@@ -277,9 +309,10 @@ class EverypayGooglePayHelper(
             callback.onResult(
                 GooglePayResult.Error(
                     Constants.E_INIT_ERROR,
-                    "Helper not initialized. Call initialize() first."
+                    "Helper not initialized. Call initialize() before making requests."
                 )
             )
+            resetPaymentState()
             return
         }
 
@@ -289,14 +322,12 @@ class EverypayGooglePayHelper(
             callback.onResult(
                 GooglePayResult.Error(
                     Constants.E_INIT_ERROR,
-                    "Google Pay not initialized"
+                    "Google Pay not initialized."
                 )
             )
+            resetPaymentState()
             return
         }
-
-        currentPaymentCallback = callback
-        isProcessingPayment = true
 
         Log.d(TAG, "Creating payment for amount: $amount")
 
@@ -313,8 +344,7 @@ class EverypayGooglePayHelper(
                             "Invalid amount format: $amount. Expected format: '10.00'"
                         )
                     )
-                    isProcessingPayment = false
-                    currentPaymentCallback = null
+                    resetPaymentState()
                     return@launch
                 }
 
@@ -371,8 +401,142 @@ class EverypayGooglePayHelper(
                         e
                     )
                 )
-                isProcessingPayment = false
-                currentPaymentCallback = null
+                resetPaymentState()
+            }
+        }
+    }
+
+    /**
+     * Requests a Google Pay token for future MIT (Merchant Initiated Transactions) / recurring payments (SDK mode).
+     * Creates a payment with amount=0 and token flags, then shows Google Pay.
+     *
+     * This method:
+     * 1. Creates payment in EveryPay with amount=0 and token flags
+     * 2. Shows Google Pay with zero amount (ESTIMATED status)
+     * 3. Processes token with EveryPay backend
+     * 4. Returns GooglePayResult.TokenReceived with token data
+     *
+     * Note: This method requires API credentials in config (SDK mode).
+     * Use requestTokenWithBackendData() for backend mode.
+     *
+     * @param label User-facing label shown in Google Pay sheet (e.g., "Card verification")
+     * @param callback Callback to receive token result (GooglePayResult.TokenReceived)
+     */
+    fun requestToken(label: String, callback: GooglePayPaymentCallback) {
+        if (config.isBackendMode()) {
+            Log.e(TAG, "Cannot use requestToken() in backend mode. Use requestTokenWithBackendData() instead.")
+            callback.onResult(
+                GooglePayResult.Error(
+                    Constants.E_PAYMENT_ERROR,
+                    "Config is in backend mode. Use requestTokenWithBackendData() method instead of requestToken()."
+                )
+            )
+            return
+        }
+
+        // Prevent concurrent operations with thread safety
+        synchronized(processingLock) {
+            if (isProcessingPayment) {
+                Log.w(TAG, "Payment or token request already in progress, ignoring request")
+                callback.onResult(
+                    GooglePayResult.Error(
+                        Constants.E_PAYMENT_ERROR,
+                        "Operation already in progress. Please wait for completion."
+                    )
+                )
+                return
+            }
+            isProcessingPayment = true
+            isTokenRequest = true
+            currentPaymentCallback = callback
+        }
+
+        if (sessionInfo == null) {
+            Log.e(TAG, "Session not initialized. Call initialize() first.")
+            callback.onResult(
+                GooglePayResult.Error(
+                    Constants.E_INIT_ERROR,
+                    "Helper not initialized. Call initialize() before making requests."
+                )
+            )
+            resetPaymentState()
+            return
+        }
+
+        val helper = googlePayHelper
+        if (helper == null) {
+            Log.e(TAG, "Google Pay helper not initialized")
+            callback.onResult(
+                GooglePayResult.Error(
+                    Constants.E_INIT_ERROR,
+                    "Google Pay not initialized."
+                )
+            )
+            resetPaymentState()
+            return
+        }
+
+        Log.d(TAG, "Requesting Google Pay token for future MIT")
+
+        coroutineScope.launch {
+            try {
+                // Create payment with amount=0 and token flags
+                val paymentRequest = CreatePaymentRequest(
+                    apiUsername = config.apiUsername!!,
+                    accountName = config.accountName!!,
+                    amount = 0.0,  // Zero amount for token request
+                    label = label,
+                    currencyCode = config.currencyCode,
+                    countryCode = config.countryCode,
+                    orderReference = UUID.randomUUID().toString(),
+                    nonce = UUID.randomUUID().toString(),
+                    mobilePayment = true,
+                    customerUrl = config.customerUrl!!,
+                    customerIp = "",
+                    customerEmail = "",
+                    timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                        timeZone = TimeZone.getTimeZone("UTC")
+                    }.format(Date()),
+                    requestToken = true,
+                    tokenConsentAgreed = true,
+                    tokenAgreement = "unscheduled"
+                )
+
+                val paymentInfo = withContext(Dispatchers.IO) {
+                    apiClient.createPayment(paymentRequest)
+                }
+
+                currentPaymentInfo = paymentInfo
+                Log.d(TAG, "Token request payment created: reference=${paymentInfo.paymentReference}")
+
+                // Build Google Pay request with token payment data
+                val googlePayRequest = buildGooglePayRequest(
+                    sessionInfo = sessionInfo!!,
+                    paymentInfo = paymentInfo,
+                    amount = "0",
+                    label = label,
+                    isTokenRequest = true
+                )
+
+                // Launch Google Pay
+                helper.requestPaymentWithCustomRequest(
+                    requestJson = googlePayRequest,
+                    callback = { result ->
+                        handleGooglePayResult(result)
+                    }
+                )
+
+            } catch (e: Exception) {
+                val errorMessage = e.message ?: "Unknown error"
+                Log.e(TAG, "Failed to create token request payment: $errorMessage", e)
+                currentPaymentCallback?.onResult(
+                    GooglePayResult.Error(
+                        Constants.E_PAYMENT_ERROR,
+                        errorMessage,
+                        e
+                    )
+                )
+                resetPaymentState()
             }
         }
     }
@@ -396,16 +560,21 @@ class EverypayGooglePayHelper(
         backendData: GooglePayBackendData,
         callback: GooglePayPaymentCallback
     ) {
-        // Prevent concurrent payment attempts
-        if (isProcessingPayment) {
-            Log.w(TAG, "Payment already in progress, ignoring request")
-            callback.onResult(
-                GooglePayResult.Error(
-                    Constants.E_PAYMENT_ERROR,
-                    "Payment already in progress. Please wait."
+        // Prevent concurrent payment attempts with thread safety
+        synchronized(processingLock) {
+            if (isProcessingPayment) {
+                Log.w(TAG, "Payment already in progress, ignoring request")
+                callback.onResult(
+                    GooglePayResult.Error(
+                        Constants.E_PAYMENT_ERROR,
+                        "Operation already in progress. Please wait for completion."
+                    )
                 )
-            )
-            return
+                return
+            }
+            isProcessingPayment = true
+            currentPaymentCallback = callback
+            currentBackendData = backendData
         }
 
         if (sessionInfo == null) {
@@ -413,9 +582,10 @@ class EverypayGooglePayHelper(
             callback.onResult(
                 GooglePayResult.Error(
                     Constants.E_INIT_ERROR,
-                    "Helper not initialized. Call initializeWithBackendData() first."
+                    "Helper not initialized. Call initializeWithBackendData() before making requests."
                 )
             )
+            resetPaymentState()
             return
         }
 
@@ -425,9 +595,10 @@ class EverypayGooglePayHelper(
             callback.onResult(
                 GooglePayResult.Error(
                     Constants.E_INIT_ERROR,
-                    "Google Pay not initialized"
+                    "Google Pay not initialized."
                 )
             )
+            resetPaymentState()
             return
         }
 
@@ -437,16 +608,12 @@ class EverypayGooglePayHelper(
             callback.onResult(
                 GooglePayResult.Error(
                     Constants.E_INIT_ERROR,
-                    "Session not initialized. Call initializeWithBackendData() first."
+                    "Session not initialized. Call initializeWithBackendData() before making requests."
                 )
             )
+            resetPaymentState()
             return
         }
-
-        // Store backend data and callback
-        currentBackendData = backendData
-        currentPaymentCallback = callback
-        isProcessingPayment = true
 
         Log.d(TAG, "Starting payment with backend data: reference=${backendData.paymentReference}")
 
@@ -492,9 +659,117 @@ class EverypayGooglePayHelper(
                         e
                     )
                 )
-                isProcessingPayment = false
-                currentPaymentCallback = null
-                currentBackendData = null
+                resetPaymentState()
+            }
+        }
+    }
+
+    /**
+     * Requests a Google Pay token for future MIT / recurring payments with backend data (Backend mode).
+     * Uses totalPriceStatus="ESTIMATED" with zero amount for card verification.
+     *
+     * This method is for backend mode where your backend:
+     * 1. Opens session (POST /api/v4/google_pay/open_session)
+     * 2. Sends session data to Android app (NO payment creation)
+     * 3. SDK shows Google Pay with zero amount
+     * 4. SDK returns token to app
+     * 5. App sends token to backend
+     * 6. Backend receives the MIT token from EveryPay (GET /api/v4/payments/{payment_reference})
+     *
+     * @param backendData Session data from backend (only session info needed, not payment info)
+     * @param callback Callback to receive token result (GooglePayResult.TokenReceived)
+     */
+    fun requestTokenWithBackendData(
+        backendData: GooglePayBackendData,
+        callback: GooglePayPaymentCallback
+    ) {
+        // Prevent concurrent operations with thread safety
+        synchronized(processingLock) {
+            if (isProcessingPayment) {
+                Log.w(TAG, "Payment or token request already in progress, ignoring request")
+                callback.onResult(
+                    GooglePayResult.Error(
+                        Constants.E_PAYMENT_ERROR,
+                        "Operation already in progress. Please wait for completion."
+                    )
+                )
+                return
+            }
+            isProcessingPayment = true
+            isTokenRequest = true
+            currentPaymentCallback = callback
+            currentBackendData = backendData
+        }
+
+        if (sessionInfo == null) {
+            Log.e(TAG, "Session not initialized. Call initializeWithBackendData() first.")
+            callback.onResult(
+                GooglePayResult.Error(
+                    Constants.E_INIT_ERROR,
+                    "Helper not initialized. Call initializeWithBackendData() before making requests."
+                )
+            )
+            resetPaymentState()
+            return
+        }
+
+        val helper = googlePayHelper
+        if (helper == null) {
+            Log.e(TAG, "Google Pay helper not initialized")
+            callback.onResult(
+                GooglePayResult.Error(
+                    Constants.E_INIT_ERROR,
+                    "Google Pay not initialized."
+                )
+            )
+            resetPaymentState()
+            return
+        }
+
+        val session = sessionInfo
+        if (session == null) {
+            Log.e(TAG, "Session not initialized")
+            callback.onResult(
+                GooglePayResult.Error(
+                    Constants.E_INIT_ERROR,
+                    "Session not initialized. Call initializeWithBackendData() before making requests."
+                )
+            )
+            resetPaymentState()
+            return
+        }
+
+        Log.d(TAG, "Requesting Google Pay token for future MIT with backend data")
+
+        coroutineScope.launch {
+            try {
+                // Build Google Pay request for token collection
+                val googlePayRequest = buildGooglePayRequest(
+                    sessionInfo = session,
+                    amount = backendData.amount.toString(),
+                    label = backendData.label,
+                    isTokenRequest = true
+                )
+
+                // Launch Google Pay
+                helper.requestPaymentWithCustomRequest(
+                    requestJson = googlePayRequest,
+                    callback = { result ->
+                        handleGooglePayResult(result)
+                    }
+                )
+
+            } catch (e: Exception) {
+                val errorMessage = e.message ?: "Unknown error"
+                Log.e(TAG, "Failed to request token with backend data: $errorMessage", e)
+                currentPaymentCallback?.onResult(
+                    GooglePayResult.Error(
+                        Constants.E_PAYMENT_ERROR,
+                        errorMessage,
+                        e
+                    )
+                )
+                resetPaymentState()
             }
         }
     }
@@ -519,13 +794,19 @@ class EverypayGooglePayHelper(
     private fun handleGooglePayResult(result: GooglePayResult) {
         when (result) {
             is GooglePayResult.Success -> {
-                // Check if we're in backend mode
+                // Determine mode and handle accordingly
                 val backendData = currentBackendData
+
                 if (backendData != null) {
-                    // Backend mode: Extract token and return to app
-                    Log.d(TAG, "Google Pay successful, extracting token for backend")
+                    // Backend mode: Extract token and return to app (both payments and token requests)
+                    val isRecurring = isTokenRequest
+                    Log.d(TAG, "Google Pay successful, extracting token for backend (isRecurring: $isRecurring)")
                     try {
-                        val tokenData = extractGooglePayToken(result.paymentData, backendData)
+                        val tokenData = extractGooglePayToken(
+                            paymentData = result.paymentData,
+                            backendData = backendData,
+                            isRecurringPayment = isRecurring
+                        )
                         currentPaymentCallback?.onResult(
                             GooglePayResult.TokenReceived(tokenData, result.paymentData)
                         )
@@ -540,31 +821,24 @@ class EverypayGooglePayHelper(
                             )
                         )
                     } finally {
-                        isProcessingPayment = false
-                        currentPaymentCallback = null
-                        currentBackendData = null
+                        resetPaymentState()
                     }
                 } else {
-                    // SDK mode: Process payment with EveryPay
-                    Log.d(TAG, "Google Pay successful, processing payment with EveryPay")
+                    // SDK mode: Process payment or token request with EveryPay
+                    val requestType = if (isTokenRequest) "token request" else "payment"
+                    Log.d(TAG, "Google Pay successful, processing $requestType with EveryPay (SDK mode)")
                     processPaymentWithEverypay(result.paymentData)
                 }
             }
             is GooglePayResult.Canceled -> {
                 Log.d(TAG, "Google Pay canceled")
                 currentPaymentCallback?.onResult(result)
-                isProcessingPayment = false
-                currentPaymentCallback = null
-                currentPaymentInfo = null
-                currentBackendData = null
+                resetPaymentState()
             }
             is GooglePayResult.Error -> {
                 Log.e(TAG, "Google Pay error: ${result.message}")
                 currentPaymentCallback?.onResult(result)
-                isProcessingPayment = false
-                currentPaymentCallback = null
-                currentPaymentInfo = null
-                currentBackendData = null
+                resetPaymentState()
             }
             else -> {
                 // This should not happen, but handle it gracefully
@@ -655,7 +929,7 @@ class EverypayGooglePayHelper(
                 // Process payment with EveryPay
                 val processRequest = ProcessPaymentRequest(
                     paymentReference = paymentInfo.paymentReference,
-                    tokenConsentAgreed = false,
+                    tokenConsentAgreed = isTokenRequest,  // true for token requests, false for regular payments
                     signature = signature,
                     intermediateSigningKey = IntermediateSigningKey(
                         signedKey = signedKey,
@@ -671,9 +945,81 @@ class EverypayGooglePayHelper(
 
                 Log.d(TAG, "Payment processed: state=${processResponse.state}")
 
-                // Notify callback based on payment state
+                // For token requests, validate state and return the token data
+                if (isTokenRequest) {
+                    // Validate payment state before retrieving token
+                    val stateValid = processResponse.state.lowercase() in listOf("settled", "authorized", "completed")
+                    if (!stateValid) {
+                        Log.e(TAG, "Token request failed with invalid state: ${processResponse.state}")
+                        currentPaymentCallback?.onResult(
+                            GooglePayResult.Error(
+                                Constants.E_PAYMENT_ERROR,
+                                "Token request failed with state: ${processResponse.state}"
+                            )
+                        )
+                        resetPaymentState()
+                        return@launch
+                    }
+
+                    // Call GET /payments to retrieve MIT token from cc_details.token
+                    val paymentDetails = try {
+                        Log.d(TAG, "Retrieving MIT token from payment details...")
+                        withContext(Dispatchers.IO) {
+                            apiClient.getPaymentDetails(paymentInfo.paymentReference)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to get payment details: ${e.message}", e)
+                        currentPaymentCallback?.onResult(
+                            GooglePayResult.Error(
+                                Constants.E_PAYMENT_ERROR,
+                                "Failed to retrieve token details: ${e.message}",
+                                e
+                            )
+                        )
+                        resetPaymentState()
+                        return@launch
+                    }
+
+                    // Validate token is available
+                    if (paymentDetails.ccDetails?.token == null) {
+                        Log.e(TAG, "Token not available in payment details")
+                        currentPaymentCallback?.onResult(
+                            GooglePayResult.Error(
+                                Constants.E_PAYMENT_ERROR,
+                                "Token not available. Payment state: ${processResponse.state}"
+                            )
+                        )
+                        resetPaymentState()
+                        return@launch
+                    }
+
+                    // Log the MIT token if available
+                    Log.d(TAG, "✅ MIT Token retrieved")
+
+                    val tokenData = GooglePayTokenData(
+                        paymentReference = paymentInfo.paymentReference,
+                        mobileAccessToken = paymentInfo.mobileAccessToken,
+                        signature = signature,
+                        intermediateSigningKey = IntermediateSigningKey(
+                            signedKey = signedKey,
+                            signatures = signatures
+                        ),
+                        protocolVersion = protocolVersion,
+                        signedMessage = signedMessage,
+                        tokenConsentAgreed = true
+                    )
+
+                    Log.d(TAG, "Token request completed. Process response state: ${processResponse.state}")
+                    currentPaymentCallback?.onResult(
+                        GooglePayResult.TokenReceived(tokenData, paymentData, processResponse, paymentDetails)
+                    )
+                    resetPaymentState()
+                    return@launch
+                }
+
+                // Notify callback based on payment state (for regular payments)
                 when (processResponse.state.lowercase()) {
-                    "settled", "authorized" -> {
+                    "settled", "authorized", "completed" -> {
                         // Payment successful
                         currentPaymentCallback?.onResult(GooglePayResult.Success(paymentData))
                     }
@@ -720,9 +1066,7 @@ class EverypayGooglePayHelper(
                     )
                 )
             } finally {
-                isProcessingPayment = false
-                currentPaymentCallback = null
-                currentPaymentInfo = null
+                resetPaymentState()
             }
         }
     }
@@ -730,10 +1074,15 @@ class EverypayGooglePayHelper(
     /**
      * Extracts Google Pay token data from PaymentData (Backend mode)
      * Parses the token and combines it with backend data for sending to backend
+     *
+     * @param paymentData Google Pay payment data containing the encrypted token
+     * @param backendData Backend session and payment data
+     * @param isRecurringPayment true for recurring/MIT payments, false for one-time payments
      */
     private fun extractGooglePayToken(
         paymentData: PaymentData,
-        backendData: GooglePayBackendData
+        backendData: GooglePayBackendData,
+        isRecurringPayment: Boolean
     ): GooglePayTokenData {
         // Parse Google Pay token with detailed error context
         val paymentDataJson = try {
@@ -806,18 +1155,20 @@ class EverypayGooglePayHelper(
             ),
             protocolVersion = protocolVersion,
             signedMessage = signedMessage,
-            tokenConsentAgreed = false
+            tokenConsentAgreed = isRecurringPayment
         )
     }
 
     /**
      * Builds Google Pay request JSON
+     * @param isTokenRequest If true, builds request for token collection (ESTIMATED, 0 amount)
      */
     private fun buildGooglePayRequest(
         sessionInfo: OpenSessionResponse,
-        paymentInfo: CreatePaymentResponse,
-        amount: String,
-        label: String
+        paymentInfo: CreatePaymentResponse? = null,
+        amount: String = "0",
+        label: String,
+        isTokenRequest: Boolean = false
     ): JSONObject {
         return JSONObject().apply {
             put("apiVersion", 2)
@@ -835,11 +1186,18 @@ class EverypayGooglePayHelper(
                 put("merchantName", sessionInfo.merchantName)
             })
             put("transactionInfo", JSONObject().apply {
-                put("totalPriceStatus", "FINAL")
-                put("totalPrice", amount)
-                put("currencyCode", paymentInfo.currency)
-                put("countryCode", paymentInfo.descriptorCountry)
-                put("totalPriceLabel", label)
+                if (isTokenRequest) {
+                    put("totalPriceStatus", "ESTIMATED")
+                    put("totalPrice", "0")
+                    put("currencyCode", config.currencyCode)
+                    put("countryCode", config.countryCode)
+                } else {
+                    put("totalPriceStatus", "FINAL")
+                    put("totalPrice", amount)
+                    put("currencyCode", paymentInfo?.currency ?: config.currencyCode)
+                    put("countryCode", paymentInfo?.descriptorCountry ?: config.countryCode)
+                    put("totalPriceLabel", label)
+                }
             })
         }
     }

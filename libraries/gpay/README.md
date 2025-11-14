@@ -10,6 +10,7 @@ A native Android SDK for integrating Google Pay into your Android applications.
 - Comprehensive error handling
 - Backend mode for secure API credential management
 - SDK mode for direct EveryPay API integration
+- Token requests for recurring payments / MIT - See [RECURRING_PAYMENTS.md](RECURRING_PAYMENTS.md)
 - Jetpack Compose support with GooglePayButton composable
 
 ## Installation
@@ -644,6 +645,14 @@ data class EverypayConfig(
 - **Type-safe** - Kotlin data classes for all models
 - **Error handling** - Comprehensive error reporting
 - **Same config as React Native library** - Easy to maintain consistency
+
+---
+
+## Token Requests for Recurring Payments
+
+Need to collect payment tokens for recurring payments or Merchant Initiated Transactions (MIT)?
+
+See the comprehensive guide: [RECURRING_PAYMENTS.md](RECURRING_PAYMENTS.md)
 
 ---
 
