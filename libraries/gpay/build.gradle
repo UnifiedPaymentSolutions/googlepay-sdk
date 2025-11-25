@@ -1,8 +1,5 @@
-plugins {
-    id 'com.android.library'
-    id 'org.jetbrains.kotlin.android'
-    id 'org.jetbrains.kotlin.plugin.compose' version '2.0.21'
-}
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
 
 android {
     namespace 'com.everypay.gpay'
@@ -13,6 +10,9 @@ android {
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles "consumer-rules.pro"
+
+        // Allow this library to be used by apps with product flavors
+        missingDimensionStrategy 'standard', 'production'
     }
 
     buildTypes {
@@ -28,12 +28,6 @@ android {
     kotlinOptions {
         jvmTarget = '17'
     }
-    buildFeatures {
-        compose true
-    }
-    composeOptions {
-        kotlinCompilerExtensionVersion = '1.5.15'
-    }
     testOptions {
         unitTests.returnDefaultValues = true
     }
@@ -43,10 +37,6 @@ dependencies {
     implementation 'androidx.core:core-ktx:1.15.0'
     implementation 'androidx.appcompat:appcompat:1.7.1'
     implementation 'com.google.android.material:material:1.13.0'
-
-    // Jetpack Compose (optional - only needed if using GooglePayButton composable)
-    implementation 'androidx.compose.ui:ui:1.7.6'
-    implementation 'androidx.compose.runtime:runtime:1.7.6'
 
     // Google Pay
     implementation 'com.google.android.gms:play-services-wallet:19.4.0'

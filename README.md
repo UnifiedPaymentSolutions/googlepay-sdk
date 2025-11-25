@@ -11,7 +11,6 @@ A native Android SDK for integrating Google Pay into your Android applications.
 - Backend mode for secure API credential management
 - SDK mode for direct EveryPay API integration
 - Token requests for recurring payments / MIT - See [RECURRING_PAYMENTS.md](RECURRING_PAYMENTS.md)
-- Jetpack Compose support with GooglePayButton composable
 
 ## Installation
 
@@ -20,8 +19,6 @@ A native Android SDK for integrating Google Pay into your Android applications.
 ```gradle
 dependencies {
     implementation project(':libraries:gpay')
-    // or when published:
-    // implementation 'com.everypay:gpay:VERSION'
 }
 ```
 
@@ -286,29 +283,46 @@ Your backend should:
 
 ### Step 3: Android Implementation
 
+**layout/activity_main.xml:**
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="16dp">
+
+    <com.google.android.gms.wallet.button.PayButton
+        android:id="@+id/googlePayButton"
+        android:layout_width="match_parent"
+        android:layout_height="48dp" />
+
+</LinearLayout>
+```
+
+**MainActivity.kt:**
 ```kotlin
-import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.runtime.*
+import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.everypay.gpay.*
-import com.everypay.gpay.compose.GooglePayButton
-import com.everypay.gpay.compose.GooglePayButtonTheme
-import com.everypay.gpay.compose.GooglePayButtonType
 import com.everypay.gpay.models.*
-import kotlinx.coroutines.launch
+import com.google.android.gms.wallet.button.ButtonConstants
+import com.google.android.gms.wallet.button.ButtonOptions
+import com.google.android.gms.wallet.button.PayButton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
     private lateinit var everyPayHelper: EverypayGooglePayHelper
+    private lateinit var googlePayButton: PayButton
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
 
         // Configure for backend mode (no API credentials)
         val config = EverypayConfig(
@@ -321,30 +335,22 @@ class MainActivity : ComponentActivity() {
         // Initialize helper
         everyPayHelper = EverypayGooglePayHelper(this, config)
 
-        // Set up UI with Google Pay button
-        setContent {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                GooglePayButton(
-                    onClick = { makePayment() },
-                    buttonType = GooglePayButtonType.BUY,
-                    buttonTheme = GooglePayButtonTheme.DARK,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                )
-            }
-        }
+        // Set up Google Pay button
+        googlePayButton = findViewById(R.id.googlePayButton)
+        val buttonOptions = ButtonOptions.newBuilder()
+            .setButtonType(ButtonConstants.ButtonType.BUY)
+            .setButtonTheme(ButtonConstants.ButtonTheme.DARK)
+            .setCornerRadius(8)
+            .setAllowedPaymentMethods("""[{"type":"CARD","parameters":{"allowedAuthMethods":["PAN_ONLY","CRYPTOGRAM_3DS"],"allowedCardNetworks":["MASTERCARD","VISA"]}}]""")
+            .build()
+
+        googlePayButton.initialize(buttonOptions)
+        googlePayButton.setOnClickListener { makePayment() }
     }
 
     private fun makePayment() {
         lifecycleScope.launch {
-            // 1. Call backend to initialize payment (backend calls EveryPay open_session + create_payment)
+            // 1. Call backend to initialize payment
             val paymentData = createPaymentOnBackend(
                 amount = "10.00",
                 orderReference = "ORDER-${System.currentTimeMillis()}",
@@ -356,7 +362,7 @@ class MainActivity : ComponentActivity() {
                 when (initResult) {
                     is GooglePayReadinessResult.Success -> {
                         if (initResult.isReady) {
-                            // 3. Show Google Pay sheet (amount and label come from backendData)
+                            // 3. Show Google Pay sheet
                             everyPayHelper.makePaymentWithBackendData(
                                 backendData = paymentData
                             ) { result ->
@@ -373,7 +379,6 @@ class MainActivity : ComponentActivity() {
                                     is GooglePayResult.Error -> {
                                         Toast.makeText(this@MainActivity, "Error: ${result.message}", Toast.LENGTH_LONG).show()
                                     }
-                                    else -> {}
                                 }
                             }
                         } else {
@@ -388,63 +393,39 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Create payment on your backend
-    // Backend makes BOTH EveryPay API calls (open_session + create_payment) and returns combined data
+    // Backend API calls (same for both View and Compose implementations)
     private suspend fun createPaymentOnBackend(
         amount: String,
         orderReference: String,
         customerEmail: String
     ): GooglePayBackendData = withContext(Dispatchers.IO) {
-        // Call your backend endpoint that internally calls both:
-        // 1. EveryPay open_session API
-        // 2. EveryPay create_payment API
-        val response = yourApiClient.post("/api/google-pay/create-payment") {
-            body = mapOf(
-                "amount" to amount,
-                "order_reference" to orderReference,
-                "customer_email" to customerEmail
-            )
-        }
-        // Backend returns combined session + payment data
+        // Call your backend endpoint from Step 2
+        // Return GooglePayBackendData with values from backend response
         GooglePayBackendData(
-            merchantId = response.merchantId,
-            merchantName = response.merchantName,
-            gatewayId = response.gatewayId,
-            gatewayMerchantId = response.gatewayMerchantId,
-            currency = response.currency,
-            countryCode = response.countryCode,
-            paymentReference = response.paymentReference,
-            mobileAccessToken = response.mobileAccessToken,
-            amount = response.amount.toDouble(),
-            label = response.label
+            merchantId = "your-merchant-id",
+            merchantName = "Your Store",
+            gatewayId = "everypay",
+            gatewayMerchantId = "your-gateway-merchant-id",
+            currency = "EUR",
+            countryCode = "EE",
+            paymentReference = "payment-ref-from-backend",
+            mobileAccessToken = "token-from-backend",
+            amount = amount,
+            label = "Product Purchase"
         )
     }
 
-    // Process token on your backend
     private suspend fun processTokenOnBackend(tokenData: GooglePayTokenData) = withContext(Dispatchers.IO) {
-        try {
-            // Send token to backend for processing via EveryPay API
-            val response = yourApiClient.post("/api/google-pay/process-token") {
-                body = tokenData.toJson().toString()
-            }
-
-            withContext(Dispatchers.Main) {
-                if (response.state == "settled" || response.state == "authorized") {
-                    Toast.makeText(this@MainActivity, "Payment successful!", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this@MainActivity, "Payment failed: ${response.state}", Toast.LENGTH_LONG).show()
-                }
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-            }
+        // Send token to your backend endpoint (Step 2.2)
+        // Handle response
+        withContext(Dispatchers.Main) {
+            Toast.makeText(this@MainActivity, "Payment successful!", Toast.LENGTH_SHORT).show()
         }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        everyPayHelper.handleActivityResult(requestCode, resultCode, data)
+        everyPayHelper.onActivityResult(requestCode, resultCode, data)
     }
 }
 ```
@@ -467,29 +448,44 @@ SDK Mode allows the SDK to make all EveryPay API calls directly from the Android
 
 ### Complete Integration Example
 
+**layout/activity_main.xml:**
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="16dp">
+
+    <com.google.android.gms.wallet.button.PayButton
+        android:id="@+id/googlePayButton"
+        android:layout_width="match_parent"
+        android:layout_height="48dp" />
+
+</LinearLayout>
+```
+
+**MainActivity.kt:**
 ```kotlin
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.appcompat.app.AppCompatActivity
 import com.everypay.gpay.*
-import com.everypay.gpay.compose.GooglePayButton
-import com.everypay.gpay.compose.GooglePayButtonType
-import com.everypay.gpay.compose.GooglePayButtonTheme
 import com.everypay.gpay.models.EverypayConfig
+import com.google.android.gms.wallet.button.ButtonConstants
+import com.google.android.gms.wallet.button.ButtonOptions
+import com.google.android.gms.wallet.button.PayButton
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
     private lateinit var everyPayHelper: EverypayGooglePayHelper
+    private lateinit var googlePayButton: PayButton
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
 
         // Configure EveryPay for SDK mode (all credentials required)
         val config = EverypayConfig(
@@ -506,14 +502,20 @@ class MainActivity : ComponentActivity() {
         // Initialize helper
         everyPayHelper = EverypayGooglePayHelper(this, config)
 
-        setContent {
-            MaterialTheme {
-                PaymentScreen(
-                    onInitialize = { initializeGooglePay() },
-                    onPayment = { makePayment() }
-                )
-            }
-        }
+        // Set up Google Pay button
+        googlePayButton = findViewById(R.id.googlePayButton)
+        val buttonOptions = ButtonOptions.newBuilder()
+            .setButtonType(ButtonConstants.ButtonType.BUY)
+            .setButtonTheme(ButtonConstants.ButtonTheme.DARK)
+            .setCornerRadius(8)
+            .setAllowedPaymentMethods("""[{"type":"CARD","parameters":{"allowedAuthMethods":["PAN_ONLY","CRYPTOGRAM_3DS"],"allowedCardNetworks":["MASTERCARD","VISA"]}}]""")
+            .build()
+
+        googlePayButton.initialize(buttonOptions)
+        googlePayButton.setOnClickListener { makePayment() }
+
+        // Initialize Google Pay
+        initializeGooglePay()
     }
 
     private fun initializeGooglePay() {
@@ -563,43 +565,6 @@ class MainActivity : ComponentActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         everyPayHelper.handleActivityResult(requestCode, resultCode, data)
-    }
-}
-
-@Composable
-fun PaymentScreen(
-    onInitialize: () -> Unit,
-    onPayment: () -> Unit
-) {
-    val isInitialized = remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        onInitialize()
-        isInitialized.value = true
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = "Pay with Google Pay",
-            style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier.padding(bottom = 32.dp)
-        )
-
-        GooglePayButton(
-            onClick = onPayment,
-            buttonType = GooglePayButtonType.BUY,
-            buttonTheme = GooglePayButtonTheme.DARK,
-            enabled = isInitialized.value,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-        )
     }
 }
 ```
@@ -682,7 +647,6 @@ The SDK requires the following dependencies (automatically included when you add
 - **Google Play Services Wallet** 19.4.0+ - For Google Pay functionality
 - **OkHttp** 4.12.0+ - For HTTP communication with EveryPay API (SDK mode only)
 - **Kotlinx Coroutines** 1.7.3+ - For async operations
-- **Jetpack Compose** 1.7.6+ (optional) - Only needed if using `GooglePayButton` composable
 - **AndroidX Core KTX** 1.17.0+
 - **AndroidX AppCompat** 1.7.1+
 
