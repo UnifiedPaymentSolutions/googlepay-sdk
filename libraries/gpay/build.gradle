@@ -1,5 +1,10 @@
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
+apply plugin: 'maven-publish'
+
+def libraryVersion = System.getenv("VERSION_NAME") ?: "0.1.0"
+def githubOwner = "UnifiedPaymentSolutions"
+def githubRepo = "googlepay-sdk"
 
 android {
     namespace 'com.everypay.gpay'
@@ -57,4 +62,56 @@ dependencies {
     testImplementation 'org.json:json:20240303'
     androidTestImplementation 'androidx.test.ext:junit:1.3.0'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.7.0'
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                from components.release
+
+                groupId = 'com.everypay'
+                artifactId = 'gpay'
+                version = libraryVersion
+
+                pom {
+                    name = 'EverypayGooglePay'
+                    description = 'Google Pay SDK for Everypay payment processing'
+                    url = "https://github.com/${githubOwner}/${githubRepo}"
+
+                    licenses {
+                        license {
+                            name = 'MIT License'
+                            url = 'https://opensource.org/licenses/MIT'
+                        }
+                    }
+
+                    developers {
+                        developer {
+                            id = 'everypay'
+                            name = 'Everypay'
+                            email = 'support@every-pay.com'
+                        }
+                    }
+
+                    scm {
+                        connection = "scm:git:git://github.com/${githubOwner}/${githubRepo}.git"
+                        developerConnection = "scm:git:ssh://github.com/${githubOwner}/${githubRepo}.git"
+                        url = "https://github.com/${githubOwner}/${githubRepo}"
+                    }
+                }
+            }
+        }
+
+        repositories {
+            maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/${githubOwner}/${githubRepo}")
+                credentials {
+                    username = System.getenv("GITHUB_ACTOR") ?: project.findProperty("gpr.user") ?: ""
+                    password = System.getenv("GITHUB_TOKEN") ?: project.findProperty("gpr.token") ?: ""
+                }
+            }
+        }
+    }
 }
