@@ -33,5 +33,6 @@ jobs:
       - name: Build and publish
         run: ./gradlew :libraries:gpay:publish
         env:
+          GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION_NAME: ${{ env.VERSION }}

@@ -2,7 +2,7 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 apply plugin: 'maven-publish'
 
-def libraryVersion = System.getenv("VERSION_NAME") ?: "0.1.0"
+def libraryVersion = (System.getenv("VERSION_NAME") ?: "0.1.0").replaceFirst("^v", "")
 def githubOwner = "UnifiedPaymentSolutions"
 def githubRepo = "googlepay-sdk"
 
