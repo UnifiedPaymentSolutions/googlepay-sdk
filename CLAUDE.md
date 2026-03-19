@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-EveryPay Google Pay SDK for Android — a native Android library (`com.everypay:gpay`) for integrating Google Pay payments via the EveryPay payment gateway. Written in Kotlin, targeting Android API 24+, JVM 17.
+EveryPay Google Pay SDK for Android — a native Android library (`com.every-pay:gpay`) for integrating Google Pay payments via the EveryPay payment gateway. Written in Kotlin, targeting Android API 24+, JVM 17.
 
 ## Build Commands
 
@@ -24,8 +24,8 @@ EveryPay Google Pay SDK for Android — a native Android library (`com.everypay:
 # Build the sample app
 ./gradlew :app:assembleDebug
 
-# Publish to GitHub Packages (requires GITHUB_ACTOR and GITHUB_TOKEN env vars)
-./gradlew :libraries:gpay:publish
+# Publish to Maven Central (CI handles this on GitHub release; requires signing + Maven Central credentials)
+./gradlew :libraries:gpay:publishAndReleaseToMavenCentral --no-configuration-cache
 ```
 
 ## Architecture
@@ -33,7 +33,7 @@ EveryPay Google Pay SDK for Android — a native Android library (`com.everypay:
 ### Two-module Gradle project
 
 - **`app/`** — Sample/test application (`com.everypay.googlepaysdk`)
-- **`libraries/gpay/`** — The SDK library (`com.everypay.gpay`), published as `com.everypay:gpay` to GitHub Packages
+- **`libraries/gpay/`** — The SDK library (`com.everypay.gpay`), published as `com.every-pay:gpay` to Maven Central
 
 ### Two integration modes
 
@@ -65,4 +65,4 @@ Tests use JUnit 4, MockK, OkHttp MockWebServer, and Google Truth assertions. Tes
 
 ## Publishing
 
-Library version is derived from `VERSION_NAME` env var (default `0.1.0`), with leading `v` stripped. Published to GitHub Packages at `UnifiedPaymentSolutions/googlepay-sdk`.
+Library version is derived from `VERSION_NAME` env var (default `0.1.0`), with leading `v` stripped. Published to Maven Central (`com.every-pay:gpay`) via the `com.vanniktech.maven.publish` plugin targeting `SonatypeHost.CENTRAL_PORTAL`. CI publishes automatically on GitHub release creation. Required GitHub secrets: `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_KEY_ID`, `SIGNING_KEY`, `SIGNING_PASSWORD`.
