@@ -18,7 +18,7 @@ A native Android SDK for integrating Google Pay into your Android applications.
 
 ```gradle
 dependencies {
-    implementation project(':libraries:gpay')
+    implementation 'com.every-pay:gpay:<version>'
 }
 ```
 
