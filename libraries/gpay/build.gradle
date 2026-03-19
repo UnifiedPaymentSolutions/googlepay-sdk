@@ -1,6 +1,6 @@
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
-apply plugin: 'maven-publish'
+apply plugin: libs.plugins.maven.publish.get().pluginId
 
 def libraryVersion = (System.getenv("VERSION_NAME") ?: "0.1.0").replaceFirst("^v", "")
 def githubOwner = "UnifiedPaymentSolutions"
@@ -64,54 +64,36 @@ dependencies {
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.7.0'
 }
 
-afterEvaluate {
-    publishing {
-        publications {
-            release(MavenPublication) {
-                from components.release
+mavenPublishing {
+    publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL)
+    signAllPublications()
 
-                groupId = 'com.everypay'
-                artifactId = 'gpay'
-                version = libraryVersion
+    coordinates("com.every-pay", "gpay", libraryVersion)
 
-                pom {
-                    name = 'EverypayGooglePay'
-                    description = 'Google Pay SDK for Everypay payment processing'
-                    url = "https://github.com/${githubOwner}/${githubRepo}"
+    pom {
+        name = 'EverypayGooglePay'
+        description = 'Google Pay SDK for Everypay payment processing'
+        url = "https://github.com/${githubOwner}/${githubRepo}"
 
-                    licenses {
-                        license {
-                            name = 'MIT License'
-                            url = 'https://opensource.org/licenses/MIT'
-                        }
-                    }
-
-                    developers {
-                        developer {
-                            id = 'everypay'
-                            name = 'Everypay'
-                            email = 'support@every-pay.com'
-                        }
-                    }
-
-                    scm {
-                        connection = "scm:git:git://github.com/${githubOwner}/${githubRepo}.git"
-                        developerConnection = "scm:git:ssh://github.com/${githubOwner}/${githubRepo}.git"
-                        url = "https://github.com/${githubOwner}/${githubRepo}"
-                    }
-                }
+        licenses {
+            license {
+                name = 'MIT License'
+                url = 'https://opensource.org/licenses/MIT'
             }
         }
 
-        repositories {
-            maven {
-                name = "GitHubPackages"
-                url = uri("https://maven.pkg.github.com/${githubOwner}/${githubRepo}")
-                credentials {
-                    username = System.getenv("GITHUB_ACTOR") ?: project.findProperty("gpr.user") ?: ""
-                    password = System.getenv("GITHUB_TOKEN") ?: project.findProperty("gpr.token") ?: ""
-                }
+        developers {
+            developer {
+                id = 'everypay'
+                name = 'Everypay'
+                email = 'support@every-pay.com'
             }
+        }
+
+        scm {
+            connection = "scm:git:git://github.com/${githubOwner}/${githubRepo}.git"
+            developerConnection = "scm:git:ssh://github.com/${githubOwner}/${githubRepo}.git"
+            url = "https://github.com/${githubOwner}/${githubRepo}"
         }
     }
 }
